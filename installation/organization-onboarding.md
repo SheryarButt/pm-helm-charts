@@ -139,6 +139,8 @@ kubectl -n platform-mesh-system get secret domain-certificate \
   -o jsonpath='{.data.ca\.crt}'
 ```
 
+Save the following as `user.kubeconfig`; the next steps use that file:
+
 ```yaml
 apiVersion: v1
 kind: Config
@@ -200,39 +202,10 @@ users:
         provideClusterInfo: false
 ```
 
-### 2. Grant temporary access to `root:orgs`
+### 2. Create the organization account
 
-Generate the administrative kubeconfig from the cluster context, then use the
-resulting `.secret/kcp/admin.kubeconfig` to grant the new user temporary
-`cluster-admin` access:
-
-```shell
-# Requires kubectl, base64, and yq. Run from the repository root.
-./tests/create-kcp-admin-kubeconfig.sh
-admin_kubeconfig="$PWD/.secret/kcp/admin.kubeconfig"
-kubectl --kubeconfig "${admin_kubeconfig}" get --raw /readyz
-```
-
-> [!WARNING]
-> This helper currently removes CA data and sets `insecure-skip-tls-verify: true`
-> because of a known root-CA rotation issue. Restrict the generated kubeconfig,
-> use it only for this administrative operation, and replace it with a
-> TLS-verifying kubeconfig when the CA issue is resolved.
-
-The generated kubeconfig targets the `root` workspace. Pass `--server` so
-that the binding is created in `root:orgs`, not in `root`:
-
-```shell
-orgs_server="https://kcp.api.<base-domain>:<external-port>/clusters/root:orgs"
-kubectl --kubeconfig "${admin_kubeconfig}" --server "${orgs_server}" \
-  create clusterrolebinding <username>-admin \
-  --clusterrole=cluster-admin \
-  --user="<user-email>"
-```
-
-### 3. Create the organization account
-
-Using the new user's OIDC kubeconfig, apply an `Account` resource:
+Using the new user's OIDC kubeconfig, apply an `Account` resource. The first
+`kubectl` call opens a browser window for the Keycloak login:
 
 ```yaml
 apiVersion: core.platform-mesh.io/v1alpha1
@@ -249,7 +222,7 @@ spec:
 kubectl --kubeconfig ./user.kubeconfig apply --filename account.yaml
 ```
 
-### 4. Verify the account
+### 3. Verify the account
 
 ```shell
 kubectl --kubeconfig ./user.kubeconfig wait \
@@ -258,12 +231,3 @@ kubectl --kubeconfig ./user.kubeconfig get account <organization-name> --output 
 ```
 
 If it times out, inspect the Account conditions; do not patch generated resources.
-
-### 5. Remove temporary access
-
-Using the administrative kubeconfig, remove the temporary binding:
-
-```shell
-kubectl --kubeconfig "${admin_kubeconfig}" --server "${orgs_server}" \
-  delete clusterrolebinding <username>-admin
-```
